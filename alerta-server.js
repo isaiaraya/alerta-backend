@@ -2,9 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
-const { v4: uuidv4 } = require('uuid'); // <-- Importar uuid
-
-
+const { v4: uuidv4 } = require('uuid');
 
 admin.initializeApp({
   credential: admin.credential.cert({
@@ -21,6 +19,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(bodyParser.json());
 
+// 🔧 Normaliza los números
 function limpiarNumero(numero) {
   let limpio = numero.replace(/\D/g, '');
   if (limpio.startsWith('56')) {
@@ -32,7 +31,7 @@ function limpiarNumero(numero) {
   return null;
 }
 
-// ✅ Ruta POST para crear alertas
+// ✅ Ruta POST para crear alerta y enviar notificación FCM
 app.post('/api/emergencias', async (req, res) => {
   const { senderName, senderPhone, message, location, contacts } = req.body;
 
@@ -71,7 +70,7 @@ app.post('/api/emergencias', async (req, res) => {
 
     if (!contactoSnapshot.empty) {
       const userDoc = contactoSnapshot.docs[0];
-      const alertaId = uuidv4(); // 🔑 ID único compartido
+      const alertaId = uuidv4();
 
       const alerta = {
         id: alertaId,
@@ -85,6 +84,7 @@ app.post('/api/emergencias', async (req, res) => {
         estado: 'activa',
       };
 
+      // Guardar alerta en el contacto
       await db
         .collection('usuarios')
         .doc(userDoc.id)
@@ -92,6 +92,7 @@ app.post('/api/emergencias', async (req, res) => {
         .doc(alertaId)
         .set(alerta);
 
+      // Guardar alerta en el emisor
       await db
         .collection('usuarios')
         .doc(emisorDoc.id)
@@ -104,6 +105,49 @@ app.post('/api/emergencias', async (req, res) => {
         nombre: userDoc.data().nombre,
         telefono: limpio,
       });
+
+      // 🚨 Enviar notificación push si el usuario tiene token FCM
+      const fcmToken = userDoc.data().fcmToken;
+
+      if (fcmToken && typeof fcmToken === 'string') {
+        const messagePayload = {
+          token: fcmToken,
+          notification: {
+            title: `🚨 Alerta de ${senderName}`,
+            body: message || '¡Tienes una nueva alerta!',
+          },
+          data: {
+            alertaId,
+            senderPhone: senderLimpio,
+          },
+          android: {
+            priority: 'high',
+            notification: {
+              sound: 'default',
+              click_action: 'FCM_PLUGIN_ACTIVITY', // Para apps Android
+            },
+          },
+          apns: {
+            payload: {
+              aps: {
+                sound: 'default',
+                alert: {
+                  title: `🚨 Alerta de ${senderName}`,
+                  body: message || '¡Tienes una nueva alerta!',
+                },
+                category: 'RESPONDER_ALERTA',
+              },
+            },
+          },
+        };
+
+        try {
+          const response = await admin.messaging().send(messagePayload);
+          console.log(`✅ Notificación enviada a ${userDoc.data().nombre}:`, response);
+        } catch (error) {
+          console.error(`❌ Error enviando notificación a ${userDoc.data().nombre}:`, error.message);
+        }
+      }
     }
   }
 
@@ -117,12 +161,11 @@ app.post('/api/emergencias', async (req, res) => {
   });
 });
 
-// ✅ Ruta GET para obtener alertas por teléfono
+// ✅ Ruta GET para obtener alertas
 app.get('/api/emergencias/:telefono', async (req, res) => {
   const telefonoParam = limpiarNumero(req.params.telefono);
-
   if (!telefonoParam) {
-    return res.status(400).json({ success: false, message: 'Número de teléfono inválido.' });
+    return res.status(400).json({ success: false, message: 'Número inválido.' });
   }
 
   const usuarioSnapshot = await db
@@ -152,7 +195,7 @@ app.get('/api/emergencias/:telefono', async (req, res) => {
   });
 });
 
-// ✅ Ruta PUT para finalizar alerta por ID
+// ✅ Ruta PUT para finalizar una alerta
 app.put('/api/emergencias/finalizar/:id', async (req, res) => {
   const alertaId = req.params.id;
 
