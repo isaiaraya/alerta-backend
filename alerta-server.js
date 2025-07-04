@@ -22,12 +22,8 @@ app.use(bodyParser.json());
 // 🔧 Normaliza los números
 function limpiarNumero(numero) {
   let limpio = numero.replace(/\D/g, '');
-  if (limpio.startsWith('56')) {
-    limpio = limpio.slice(2);
-  }
-  if (limpio.startsWith('9') && limpio.length === 9) {
-    return limpio;
-  }
+  if (limpio.startsWith('56')) limpio = limpio.slice(2);
+  if (limpio.startsWith('9') && limpio.length === 9) return limpio;
   return null;
 }
 
@@ -58,7 +54,7 @@ app.post('/api/emergencias', async (req, res) => {
 
   const emisorDoc = remitenteSnapshot.docs[0];
   const contactosRegistrados = [];
-  const alertaIdEmisor = uuidv4(); // ID único para el emisor
+  const alertaIdEmisor = uuidv4();
 
   for (const numero of contacts) {
     const limpio = limpiarNumero(numero);
@@ -72,9 +68,8 @@ app.post('/api/emergencias', async (req, res) => {
     if (!contactoSnapshot.empty) {
       const userDoc = contactoSnapshot.docs[0];
       const nombreContacto = userDoc.data().nombre || limpio;
-      const alertaIdReceptor = uuidv4(); // ID único para el receptor
+      const alertaIdReceptor = uuidv4();
 
-      // 🧾 Alerta personalizada para el receptor
       const alertaParaContacto = {
         id: alertaIdReceptor,
         senderName,
@@ -87,7 +82,6 @@ app.post('/api/emergencias', async (req, res) => {
         estado: 'activa',
       };
 
-      // 📥 Guardar alerta en alertas_recibidas del receptor
       await db
         .collection('usuarios')
         .doc(userDoc.id)
@@ -95,14 +89,12 @@ app.post('/api/emergencias', async (req, res) => {
         .doc(alertaIdReceptor)
         .set(alertaParaContacto);
 
-      // ➕ Agregar a lista de contactos registrados
       contactosRegistrados.push({
         id: userDoc.id,
         nombre: nombreContacto,
         telefono: limpio,
       });
 
-      // 🚨 Enviar notificación push si el receptor tiene FCM token
       const fcmToken = userDoc.data().fcmToken;
 
       if (fcmToken && typeof fcmToken === 'string') {
@@ -113,7 +105,7 @@ app.post('/api/emergencias', async (req, res) => {
             body: message || '¡Tienes una nueva alerta!',
           },
           data: {
-            alertaId: alertaIdReceptor, // <- ✅ Enviar ID correcto
+            alertaId: alertaIdReceptor,
             senderPhone: senderLimpio,
             click_action: 'FLUTTER_NOTIFICATION_CLICK',
           },
@@ -139,8 +131,7 @@ app.post('/api/emergencias', async (req, res) => {
         };
 
         try {
-          const response = await admin.messaging().send(messagePayload);
-          console.log(`✅ Notificación enviada a ${nombreContacto}:`, response);
+          await admin.messaging().send(messagePayload);
         } catch (error) {
           console.error(`❌ Error enviando notificación a ${nombreContacto}:`, error.message);
         }
@@ -148,14 +139,13 @@ app.post('/api/emergencias', async (req, res) => {
     }
   }
 
-  // 📤 Guardar alerta resumen en alertas_enviadas del emisor
   if (contactosRegistrados.length > 0) {
     const alertaParaEmisor = {
       id: alertaIdEmisor,
       senderName,
       senderPhone: senderLimpio,
       emisor: senderLimpio,
-      destinatarios: contactosRegistrados, // Lista de objetos {id, nombre, telefono}
+      destinatarios: contactosRegistrados,
       message,
       location,
       timestamp: new Date().toISOString(),
@@ -169,8 +159,6 @@ app.post('/api/emergencias', async (req, res) => {
       .doc(alertaIdEmisor)
       .set(alertaParaEmisor);
   }
-
-  console.log('Contactos registrados que recibieron alerta:', contactosRegistrados);
 
   return res.status(200).json({
     success: true,
@@ -214,7 +202,7 @@ app.get('/api/emergencias/:telefono', async (req, res) => {
   });
 });
 
-// ✅ Ruta PUT para finalizar una alerta
+// ✅ Ruta PUT para finalizar una alerta y sus copias en los destinatarios
 app.put('/api/emergencias/finalizar/:id', async (req, res) => {
   const alertaId = req.params.id;
 
@@ -226,24 +214,53 @@ app.put('/api/emergencias/finalizar/:id', async (req, res) => {
       const userId = usuarioDoc.id;
       const usuarioRef = db.collection('usuarios').doc(userId);
 
-      const [alertaEnviada, alertaRecibida] = await Promise.all([
+      const [alertaEnviadaSnap, alertaRecibidaSnap] = await Promise.all([
         usuarioRef.collection('alertas_enviadas').doc(alertaId).get(),
         usuarioRef.collection('alertas_recibidas').doc(alertaId).get(),
       ]);
 
-      if (alertaEnviada.exists) {
-        await alertaEnviada.ref.update({ estado: 'finalizada' });
+      if (alertaEnviadaSnap.exists) {
+        const alertaEnviada = alertaEnviadaSnap.data();
+        await alertaEnviadaSnap.ref.update({ estado: 'finalizada' });
         encontrada = true;
+
+        const destinatarios = alertaEnviada.destinatarios || [];
+
+        for (const d of destinatarios) {
+          const telefonoDestinatario = d.telefono;
+
+          const destSnap = await db
+            .collection('usuarios')
+            .where('telefono', '==', telefonoDestinatario)
+            .get();
+
+          if (!destSnap.empty) {
+            const destDoc = destSnap.docs[0];
+            const recibidasRef = db.collection('usuarios').doc(destDoc.id).collection('alertas_recibidas');
+
+            const alertaQuery = await recibidasRef
+              .where('senderPhone', '==', alertaEnviada.senderPhone)
+              .where('estado', '==', 'activa')
+              .get();
+
+            for (const alertaDoc of alertaQuery.docs) {
+              await alertaDoc.ref.update({ estado: 'finalizada' });
+            }
+          }
+        }
       }
 
-      if (alertaRecibida.exists) {
-        await alertaRecibida.ref.update({ estado: 'finalizada' });
+      if (alertaRecibidaSnap.exists) {
+        await alertaRecibidaSnap.ref.update({ estado: 'finalizada' });
         encontrada = true;
       }
     }
 
     if (encontrada) {
-      return res.json({ success: true, message: '✅ Alerta finalizada correctamente.' });
+      return res.json({
+        success: true,
+        message: '✅ Alerta finalizada correctamente para emisor y destinatarios.',
+      });
     } else {
       return res.status(404).json({ success: false, message: '❌ Alerta no encontrada.' });
     }
