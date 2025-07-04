@@ -54,7 +54,9 @@ app.post('/api/emergencias', async (req, res) => {
 
   const emisorDoc = remitenteSnapshot.docs[0];
   const contactosRegistrados = [];
-  const alertaIdEmisor = uuidv4();
+
+  // Generar un único ID para toda la alerta (emisor y destinatarios)
+  const alertaIdUnico = uuidv4();
 
   for (const numero of contacts) {
     const limpio = limpiarNumero(numero);
@@ -68,10 +70,9 @@ app.post('/api/emergencias', async (req, res) => {
     if (!contactoSnapshot.empty) {
       const userDoc = contactoSnapshot.docs[0];
       const nombreContacto = userDoc.data().nombre || limpio;
-      const alertaIdReceptor = uuidv4();
 
       const alertaParaContacto = {
-        id: alertaIdReceptor,
+        id: alertaIdUnico, // Mismo ID para todos
         senderName,
         senderPhone: senderLimpio,
         emisor: senderLimpio,
@@ -86,7 +87,7 @@ app.post('/api/emergencias', async (req, res) => {
         .collection('usuarios')
         .doc(userDoc.id)
         .collection('alertas_recibidas')
-        .doc(alertaIdReceptor)
+        .doc(alertaIdUnico) // Mismo ID aquí
         .set(alertaParaContacto);
 
       contactosRegistrados.push({
@@ -105,7 +106,7 @@ app.post('/api/emergencias', async (req, res) => {
             body: message || '¡Tienes una nueva alerta!',
           },
           data: {
-            alertaId: alertaIdReceptor,
+            alertaId: alertaIdUnico,
             senderPhone: senderLimpio,
             click_action: 'FLUTTER_NOTIFICATION_CLICK',
           },
@@ -139,9 +140,10 @@ app.post('/api/emergencias', async (req, res) => {
     }
   }
 
+  // Almacena alerta para el emisor con el mismo ID
   if (contactosRegistrados.length > 0) {
     const alertaParaEmisor = {
-      id: alertaIdEmisor,
+      id: alertaIdUnico,
       senderName,
       senderPhone: senderLimpio,
       emisor: senderLimpio,
@@ -156,7 +158,7 @@ app.post('/api/emergencias', async (req, res) => {
       .collection('usuarios')
       .doc(emisorDoc.id)
       .collection('alertas_enviadas')
-      .doc(alertaIdEmisor)
+      .doc(alertaIdUnico) // mismo ID
       .set(alertaParaEmisor);
   }
 
