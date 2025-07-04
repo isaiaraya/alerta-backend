@@ -240,13 +240,11 @@ app.put('/api/emergencias/finalizar/:id', async (req, res) => {
             const destDoc = destSnap.docs[0];
             const recibidasRef = db.collection('usuarios').doc(destDoc.id).collection('alertas_recibidas');
 
-            const alertaQuery = await recibidasRef
-              .where('senderPhone', '==', alertaEnviada.senderPhone)
-              .where('estado', '==', 'activa')
-              .get();
+            // Cambio importante aquí: actualizar solo la alerta con el ID exacto
+            const alertaRecibidaDoc = await recibidasRef.doc(alertaId).get();
 
-            for (const alertaDoc of alertaQuery.docs) {
-              await alertaDoc.ref.update({ estado: 'finalizada' });
+            if (alertaRecibidaDoc.exists && alertaRecibidaDoc.data().estado === 'activa') {
+              await alertaRecibidaDoc.ref.update({ estado: 'finalizada' });
             }
           }
         }
