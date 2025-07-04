@@ -93,30 +93,23 @@ app.post('/api/emergencias', async (req, res) => {
       if (fcmToken && typeof fcmToken === 'string') {
         const messagePayload = {
           token: fcmToken,
-          notification: {
+          // Aquí solo usamos data para control total en la app
+          data: {
             title: `🚨 Alerta de ${senderName}`,
             body: message || '¡Tienes una nueva alerta!',
-          },
-          data: {
             alertaId: alertaId,
             senderPhone: senderLimpio,
-            click_action: 'FCM_PLUGIN_ACTIVITY', // necesario para Android
+            click_action: 'FCM_PLUGIN_ACTIVITY' // Para que Android abra la app al tocar la notificación
           },
           android: {
             priority: 'high',
-            notification: {
-              sound: 'default',
-              click_action: 'FCM_PLUGIN_ACTIVITY',
-            },
+            // No incluimos 'notification' para evitar manejo automático
           },
           apns: {
             payload: {
               aps: {
                 sound: 'default',
-                alert: {
-                  title: `🚨 Alerta de ${senderName}`,
-                  body: message || '¡Tienes una nueva alerta!',
-                }
+                category: 'ALERTA_CATEGORY' // Opcional para iOS si usas categorías
               }
             }
           }
