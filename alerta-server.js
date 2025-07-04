@@ -119,12 +119,13 @@ app.post('/api/emergencias', async (req, res) => {
           data: {
             alertaId,
             senderPhone: senderLimpio,
+             click_action: 'FLUTTER_NOTIFICATION_CLICK',
           },
           android: {
             priority: 'high',
             notification: {
               sound: 'default',
-              click_action: 'FCM_PLUGIN_ACTIVITY', // Para apps Android
+              click_action: 'FLUTTER_NOTIFICATION_CLICK', // Para apps Android
             },
           },
           apns: {
