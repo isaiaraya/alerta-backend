@@ -58,7 +58,7 @@ app.post('/api/emergencias', async (req, res) => {
 
   const emisorDoc = remitenteSnapshot.docs[0];
   const contactosRegistrados = [];
-  const alertaId = uuidv4(); // ID único para el emisor
+  const alertaIdEmisor = uuidv4(); // ID único para el emisor
 
   for (const numero of contacts) {
     const limpio = limpiarNumero(numero);
@@ -72,10 +72,11 @@ app.post('/api/emergencias', async (req, res) => {
     if (!contactoSnapshot.empty) {
       const userDoc = contactoSnapshot.docs[0];
       const nombreContacto = userDoc.data().nombre || limpio;
+      const alertaIdReceptor = uuidv4(); // ID único para el receptor
 
       // 🧾 Alerta personalizada para el receptor
       const alertaParaContacto = {
-        id: uuidv4(), // ID único por receptor
+        id: alertaIdReceptor,
         senderName,
         senderPhone: senderLimpio,
         emisor: senderLimpio,
@@ -91,7 +92,7 @@ app.post('/api/emergencias', async (req, res) => {
         .collection('usuarios')
         .doc(userDoc.id)
         .collection('alertas_recibidas')
-        .doc(alertaParaContacto.id)
+        .doc(alertaIdReceptor)
         .set(alertaParaContacto);
 
       // ➕ Agregar a lista de contactos registrados
@@ -112,7 +113,7 @@ app.post('/api/emergencias', async (req, res) => {
             body: message || '¡Tienes una nueva alerta!',
           },
           data: {
-            alertaId,
+            alertaId: alertaIdReceptor, // <- ✅ Enviar ID correcto
             senderPhone: senderLimpio,
             click_action: 'FLUTTER_NOTIFICATION_CLICK',
           },
@@ -150,7 +151,7 @@ app.post('/api/emergencias', async (req, res) => {
   // 📤 Guardar alerta resumen en alertas_enviadas del emisor
   if (contactosRegistrados.length > 0) {
     const alertaParaEmisor = {
-      id: alertaId,
+      id: alertaIdEmisor,
       senderName,
       senderPhone: senderLimpio,
       emisor: senderLimpio,
@@ -165,7 +166,7 @@ app.post('/api/emergencias', async (req, res) => {
       .collection('usuarios')
       .doc(emisorDoc.id)
       .collection('alertas_enviadas')
-      .doc(alertaId)
+      .doc(alertaIdEmisor)
       .set(alertaParaEmisor);
   }
 
