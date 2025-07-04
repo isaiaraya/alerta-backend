@@ -19,19 +19,23 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(bodyParser.json());
 
-// 🔧 Limpia el número
+// 🔧 Normaliza los números
 function limpiarNumero(numero) {
   let limpio = numero.replace(/\D/g, '');
-  if (limpio.startsWith('56')) limpio = limpio.slice(2);
-  if (limpio.startsWith('9') && limpio.length === 9) return limpio;
+  if (limpio.startsWith('56')) {
+    limpio = limpio.slice(2);
+  }
+  if (limpio.startsWith('9') && limpio.length === 9) {
+    return limpio;
+  }
   return null;
 }
 
-// ✅ POST: Crear alerta y enviar notificación FCM
+// ✅ Ruta POST para crear alerta y enviar notificación FCM
 app.post('/api/emergencias', async (req, res) => {
   const { senderName, senderPhone, message, location, contacts } = req.body;
 
-  if (!Array.isArray(contacts)) {
+  if (!contacts || !Array.isArray(contacts)) {
     return res.status(400).json({ success: false, message: 'Lista de contactos inválida.' });
   }
 
@@ -40,11 +44,16 @@ app.post('/api/emergencias', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Número del remitente inválido.' });
   }
 
-  const remitenteSnapshot = await db.collection('usuarios')
-    .where('telefono', '==', senderLimpio).get();
+  const remitenteSnapshot = await db
+    .collection('usuarios')
+    .where('telefono', '==', senderLimpio)
+    .get();
 
   if (remitenteSnapshot.empty) {
-    return res.status(403).json({ success: false, message: 'El remitente no está registrado.' });
+    return res.status(403).json({
+      success: false,
+      message: 'El remitente no está registrado en la base de datos.',
+    });
   }
 
   const emisorDoc = remitenteSnapshot.docs[0];
@@ -54,8 +63,10 @@ app.post('/api/emergencias', async (req, res) => {
     const limpio = limpiarNumero(numero);
     if (!limpio) continue;
 
-    const contactoSnapshot = await db.collection('usuarios')
-      .where('telefono', '==', limpio).get();
+    const contactoSnapshot = await db
+      .collection('usuarios')
+      .where('telefono', '==', limpio)
+      .get();
 
     if (!contactoSnapshot.empty) {
       const userDoc = contactoSnapshot.docs[0];
@@ -73,13 +84,21 @@ app.post('/api/emergencias', async (req, res) => {
         estado: 'activa',
       };
 
-      // Guardar alerta en receptor
-      await db.collection('usuarios').doc(userDoc.id)
-        .collection('alertas_recibidas').doc(alertaId).set(alerta);
+      // Guardar alerta en el contacto
+      await db
+        .collection('usuarios')
+        .doc(userDoc.id)
+        .collection('alertas_recibidas')
+        .doc(alertaId)
+        .set(alerta);
 
-      // Guardar alerta en emisor
-      await db.collection('usuarios').doc(emisorDoc.id)
-        .collection('alertas_enviadas').doc(alertaId).set(alerta);
+      // Guardar alerta en el emisor
+      await db
+        .collection('usuarios')
+        .doc(emisorDoc.id)
+        .collection('alertas_enviadas')
+        .doc(alertaId)
+        .set(alerta);
 
       contactosRegistrados.push({
         id: userDoc.id,
@@ -87,43 +106,52 @@ app.post('/api/emergencias', async (req, res) => {
         telefono: limpio,
       });
 
-      // 🚨 Enviar notificación push si tiene FCM token
+      // 🚨 Enviar notificación push si el usuario tiene token FCM
       const fcmToken = userDoc.data().fcmToken;
 
       if (fcmToken && typeof fcmToken === 'string') {
         const messagePayload = {
           token: fcmToken,
-          // Aquí solo usamos data para control total en la app
-          data: {
+          notification: {
             title: `🚨 Alerta de ${senderName}`,
             body: message || '¡Tienes una nueva alerta!',
-            alertaId: alertaId,
+          },
+          data: {
+            alertaId,
             senderPhone: senderLimpio,
-            click_action: 'FCM_PLUGIN_ACTIVITY' // Para que Android abra la app al tocar la notificación
           },
           android: {
             priority: 'high',
-            // No incluimos 'notification' para evitar manejo automático
+            notification: {
+              sound: 'default',
+              click_action: 'FCM_PLUGIN_ACTIVITY', // Para apps Android
+            },
           },
           apns: {
             payload: {
               aps: {
                 sound: 'default',
-                category: 'ALERTA_CATEGORY' // Opcional para iOS si usas categorías
-              }
-            }
-          }
+                alert: {
+                  title: `🚨 Alerta de ${senderName}`,
+                  body: message || '¡Tienes una nueva alerta!',
+                },
+                category: 'RESPONDER_ALERTA',
+              },
+            },
+          },
         };
 
         try {
           const response = await admin.messaging().send(messagePayload);
           console.log(`✅ Notificación enviada a ${userDoc.data().nombre}:`, response);
-        } catch (err) {
-          console.error(`❌ Error al enviar notificación a ${userDoc.data().nombre}:`, err.message);
+        } catch (error) {
+          console.error(`❌ Error enviando notificación a ${userDoc.data().nombre}:`, error.message);
         }
       }
     }
   }
+
+  console.log('Contactos registrados que recibieron alerta:', contactosRegistrados);
 
   return res.status(200).json({
     success: true,
@@ -133,15 +161,17 @@ app.post('/api/emergencias', async (req, res) => {
   });
 });
 
-// ✅ GET: Obtener alertas por teléfono
+// ✅ Ruta GET para obtener alertas
 app.get('/api/emergencias/:telefono', async (req, res) => {
   const telefonoParam = limpiarNumero(req.params.telefono);
   if (!telefonoParam) {
     return res.status(400).json({ success: false, message: 'Número inválido.' });
   }
 
-  const usuarioSnapshot = await db.collection('usuarios')
-    .where('telefono', '==', telefonoParam).get();
+  const usuarioSnapshot = await db
+    .collection('usuarios')
+    .where('telefono', '==', telefonoParam)
+    .get();
 
   if (usuarioSnapshot.empty) {
     return res.status(404).json({ success: false, message: 'Usuario no encontrado.' });
@@ -154,17 +184,21 @@ app.get('/api/emergencias/:telefono', async (req, res) => {
     db.collection('usuarios').doc(userId).collection('alertas_enviadas').orderBy('timestamp', 'desc').get(),
   ]);
 
+  const alertasRecibidas = recibidasSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  const alertasEnviadas = enviadasSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
   return res.status(200).json({
     success: true,
     telefono: telefonoParam,
-    recibidas: recibidasSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })),
-    enviadas: enviadasSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+    recibidas: alertasRecibidas,
+    enviadas: alertasEnviadas,
   });
 });
 
-// ✅ PUT: Finalizar alerta
+// ✅ Ruta PUT para finalizar una alerta
 app.put('/api/emergencias/finalizar/:id', async (req, res) => {
   const alertaId = req.params.id;
+
   try {
     const usuariosSnapshot = await db.collection('usuarios').get();
     let encontrada = false;
@@ -195,12 +229,11 @@ app.put('/api/emergencias/finalizar/:id', async (req, res) => {
       return res.status(404).json({ success: false, message: '❌ Alerta no encontrada.' });
     }
   } catch (error) {
-    console.error('❌ Error al finalizar alerta:', error);
+    console.error('Error al finalizar alerta:', error);
     return res.status(500).json({ success: false, message: '❌ Error al finalizar alerta.' });
   }
 });
 
-// 🔊 Iniciar servidor
 app.listen(PORT, () => {
   console.log(`🚨 Servidor de emergencias activo en http://localhost:${PORT}`);
 });
