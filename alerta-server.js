@@ -58,6 +58,7 @@ app.post('/api/emergencias', async (req, res) => {
 
   const emisorDoc = remitenteSnapshot.docs[0];
   const contactosRegistrados = [];
+  const alertaId = uuidv4(); // ID único para el emisor
 
   for (const numero of contacts) {
     const limpio = limpiarNumero(numero);
@@ -70,10 +71,11 @@ app.post('/api/emergencias', async (req, res) => {
 
     if (!contactoSnapshot.empty) {
       const userDoc = contactoSnapshot.docs[0];
-      const alertaId = uuidv4();
+      const nombreContacto = userDoc.data().nombre || limpio;
 
-      const alerta = {
-        id: alertaId,
+      // 🧾 Alerta personalizada para el receptor
+      const alertaParaContacto = {
+        id: uuidv4(), // ID único por receptor
         senderName,
         senderPhone: senderLimpio,
         emisor: senderLimpio,
@@ -84,29 +86,22 @@ app.post('/api/emergencias', async (req, res) => {
         estado: 'activa',
       };
 
-      // Guardar alerta en el contacto
+      // 📥 Guardar alerta en alertas_recibidas del receptor
       await db
         .collection('usuarios')
         .doc(userDoc.id)
         .collection('alertas_recibidas')
-        .doc(alertaId)
-        .set(alerta);
+        .doc(alertaParaContacto.id)
+        .set(alertaParaContacto);
 
-      // Guardar alerta en el emisor
-      await db
-        .collection('usuarios')
-        .doc(emisorDoc.id)
-        .collection('alertas_enviadas')
-        .doc(alertaId)
-        .set(alerta);
-
+      // ➕ Agregar a lista de contactos registrados
       contactosRegistrados.push({
         id: userDoc.id,
-        nombre: userDoc.data().nombre,
+        nombre: nombreContacto,
         telefono: limpio,
       });
 
-      // 🚨 Enviar notificación push si el usuario tiene token FCM
+      // 🚨 Enviar notificación push si el receptor tiene FCM token
       const fcmToken = userDoc.data().fcmToken;
 
       if (fcmToken && typeof fcmToken === 'string') {
@@ -119,13 +114,13 @@ app.post('/api/emergencias', async (req, res) => {
           data: {
             alertaId,
             senderPhone: senderLimpio,
-             click_action: 'FLUTTER_NOTIFICATION_CLICK',
+            click_action: 'FLUTTER_NOTIFICATION_CLICK',
           },
           android: {
             priority: 'high',
             notification: {
               sound: 'default',
-              click_action: 'FLUTTER_NOTIFICATION_CLICK', // Para apps Android
+              click_action: 'FLUTTER_NOTIFICATION_CLICK',
             },
           },
           apns: {
@@ -144,12 +139,34 @@ app.post('/api/emergencias', async (req, res) => {
 
         try {
           const response = await admin.messaging().send(messagePayload);
-          console.log(`✅ Notificación enviada a ${userDoc.data().nombre}:`, response);
+          console.log(`✅ Notificación enviada a ${nombreContacto}:`, response);
         } catch (error) {
-          console.error(`❌ Error enviando notificación a ${userDoc.data().nombre}:`, error.message);
+          console.error(`❌ Error enviando notificación a ${nombreContacto}:`, error.message);
         }
       }
     }
+  }
+
+  // 📤 Guardar alerta resumen en alertas_enviadas del emisor
+  if (contactosRegistrados.length > 0) {
+    const alertaParaEmisor = {
+      id: alertaId,
+      senderName,
+      senderPhone: senderLimpio,
+      emisor: senderLimpio,
+      destinatarios: contactosRegistrados, // Lista de objetos {id, nombre, telefono}
+      message,
+      location,
+      timestamp: new Date().toISOString(),
+      estado: 'activa',
+    };
+
+    await db
+      .collection('usuarios')
+      .doc(emisorDoc.id)
+      .collection('alertas_enviadas')
+      .doc(alertaId)
+      .set(alertaParaEmisor);
   }
 
   console.log('Contactos registrados que recibieron alerta:', contactosRegistrados);
